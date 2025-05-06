@@ -1,0 +1,68 @@
+import os
+import json
+import logging
+import requests
+from time import sleep
+
+# ========== CONFIGURATION ==========
+JSON_FOLDER = r"path\to\your\json\folder"  # <-- Update this path
+BEARER_TOKEN = "your_bearer_token_here"    # <-- Update your token here
+
+SUCCESS_LOG_FILE = "success_log.txt"
+FAILURE_LOG_FILE = "failure_log.txt"
+
+API_URL_TEMPLATE = "https://api.hubapi.com/automation/v4/flows/{flowId}"
+
+# Optional delay between requests (seconds)
+REQUEST_DELAY = 1
+
+# ========== LOGGING SETUP ==========
+logging.basicConfig(level=logging.INFO)
+success_logger = logging.getLogger('success_logger')
+failure_logger = logging.getLogger('failure_logger')
+
+success_handler = logging.FileHandler(SUCCESS_LOG_FILE)
+failure_handler = logging.FileHandler(FAILURE_LOG_FILE)
+
+success_logger.addHandler(success_handler)
+failure_logger.addHandler(failure_handler)
+
+# ========== FUNCTION TO PROCESS FILES ==========
+def process_json_file(file_path):
+    flow_id = os.path.splitext(os.path.basename(file_path))[0]
+    url = API_URL_TEMPLATE.format(flowId=flow_id)
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+    except Exception as e:
+        failure_logger.error(f"Failed to read JSON file {file_path}: {e}")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {BEARER_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.put(url, headers=headers, json=json_data, timeout=15)
+        if response.ok:
+            success_logger.info(f"Success: {file_path} -> Status Code: {response.status_code}")
+        else:
+            failure_logger.error(f"Failure: {file_path} -> Status Code: {response.status_code} | Response: {response.text}")
+    except requests.RequestException as e:
+        failure_logger.error(f"Request failed for {file_path}: {e}")
+
+def main():
+    json_files = [f for f in os.listdir(JSON_FOLDER) if f.endswith('.json')]
+    if not json_files:
+        print("No JSON files found in the specified folder.")
+        return
+
+    for json_file in json_files:
+        file_path = os.path.join(JSON_FOLDER, json_file)
+        process_json_file(file_path)
+        sleep(REQUEST_DELAY)  # Optional delay to avoid hitting rate limits
+
+if __name__ == "__main__":
+    main()
