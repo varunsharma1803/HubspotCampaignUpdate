@@ -1,0 +1,80 @@
+import pandas as pd
+import requests
+import json
+import logging
+import os
+from time import sleep
+
+# ========== CONFIGURATION ==========
+EXCEL_PATH = "path/to/your/spreadsheet.xlsx"    # <-- Update this path
+BEARER_TOKEN = "your_bearer_token_here"         # <-- Update this token
+ERROR_LOG_FILE = "error_log.txt"
+OUTPUT_FOLDER = "output_jsons"                  # Folder to save JSON files
+REQUEST_DELAY = 1  # Seconds between requests
+
+# EXCEL_PATH = "C:\\Users\\YourName\\Documents\\spreadsheet.xlsx"
+
+
+
+# ========== LOGGING SETUP ==========
+logging.basicConfig(
+    filename=ERROR_LOG_FILE,
+    level=logging.ERROR,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# ========== ENSURE OUTPUT FOLDER EXISTS ==========
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+def main():
+    try:
+        # Read Excel file
+        df = pd.read_excel(
+            EXCEL_PATH,
+            usecols=["Flow ID", "Endpoint"],
+            engine='openpyxl'
+        )
+    except Exception as e:
+        logging.error(f"Failed to read Excel file: {str(e)}")
+        return
+
+    # Identify and log rows with missing or unreadable data
+    problematic_rows = df[df.isnull().any(axis=1)]
+    if not problematic_rows.empty:
+        for idx, row in problematic_rows.iterrows():
+            logging.error(f"Unreadable or incomplete row at index {idx}: {row.to_dict()}")
+        # Remove problematic rows from DataFrame before processing
+        df = df.drop(problematic_rows.index)
+
+    # Process each valid row
+    for index, row in df.iterrows():
+        flow_id = str(row["Flow ID"]).strip()
+        endpoint = str(row["Endpoint"]).strip()
+
+        # Skip if either value is still missing after cleaning
+        if not flow_id or not endpoint:
+            logging.error(f"Missing Flow ID or Endpoint at index {index}: {row.to_dict()}")
+            continue
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {BEARER_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            response = requests.get(endpoint, headers=headers, timeout=10)
+            response.raise_for_status()  # Raises HTTPError for bad responses
+
+            # Save response as JSON
+            output_path = os.path.join(OUTPUT_FOLDER, f"{flow_id}.json")
+            with open(output_path, "w") as f:
+                json.dump(response.json(), f, indent=2)
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Flow ID: {flow_id} | Endpoint: {endpoint} | Error: {str(e)}"
+            logging.error(error_msg)
+
+        sleep(REQUEST_DELAY)  # Rate limiting
+
+if __name__ == "__main__":
+    main()
