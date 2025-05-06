@@ -1,0 +1,71 @@
+import os
+import json
+import pandas as pd
+import logging
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# ========== CONFIGURATION ==========
+SOURCE_FOLDER = r"path\to\your\json\files"  # <-- Update this
+PROCESSED_FOLDER = r"path\to\Processed Files"  # <-- Update this
+MAPPING_FILE = r"path\to\CampaignIdMapping.xlsx"  # <-- Update this
+ERROR_LOG_FILE = "campaign_id_mapping_errors.txt"
+MAX_WORKERS = 8  # Adjust based on your CPU
+
+# ========== LOGGING SETUP ==========
+logging.basicConfig(
+    filename=ERROR_LOG_FILE,
+    level=logging.ERROR,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# ========== ENSURE OUTPUT FOLDER EXISTS ==========
+os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
+# ========== LOAD MAPPING ==========
+try:
+    mapping_df = pd.read_excel(MAPPING_FILE, usecols=["CJCampaignId", "ArcCampaignId"])
+    id_mapping = dict(zip(mapping_df["CJCampaignId"].astype(str), mapping_df["ArcCampaignId"].astype(str)))
+except Exception as e:
+    logging.error(f"Failed to load mapping file: {str(e)}")
+    raise
+
+def replace_campaign_id(obj):
+    """Recursively replace campaign_id values in any dict or list."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "campaign_id" and v in id_mapping:
+                obj[k] = id_mapping[v]
+            else:
+                obj[k] = replace_campaign_id(v)
+    elif isinstance(obj, list):
+        return [replace_campaign_id(item) for item in obj]
+    return obj
+
+def process_file(json_path):
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        data = replace_campaign_id(data)
+        output_path = os.path.join(PROCESSED_FOLDER, os.path.basename(json_path))
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logging.error(f"Error processing {json_path}: {str(e)}")
+
+def main():
+    json_files = list(Path(SOURCE_FOLDER).glob("*.json"))
+    if not json_files:
+        logging.error(f"No JSON files found in {SOURCE_FOLDER}")
+        return
+
+    # Use ThreadPoolExecutor for faster processing
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(process_file, str(json_file)) for json_file in json_files]
+        for future in as_completed(futures):
+            # This will re-raise any exception not already caught in process_file
+            future.result()
+
+if __name__ == "__main__":
+    main()
