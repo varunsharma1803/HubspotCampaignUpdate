@@ -1,0 +1,49 @@
+import os
+import pandas as pd
+import numpy as np
+
+folder_location = r'C:\Users\varun\Downloads\ArcDataAnalysis\Dupe Analysis'
+
+def process_large_csv():
+    # Safely join paths
+    users_path = os.path.join(folder_location, 'Users.xlsx')
+    all_data_path = os.path.join(folder_location, 'AllData.csv')
+    output_path = os.path.join(folder_location, 'AllData_with_Decision.xlsx')
+
+    # Read usernames
+    users = pd.read_excel(
+        users_path,
+        usecols=['Username'],
+        dtype={'Username': 'category'}
+    ).squeeze().tolist()
+
+    chunk_list = []
+
+    for chunk in pd.read_csv(
+        all_data_path,
+        usecols=['Group', 'CreatedBy.Name'],
+        dtype={'Group': 'int32', 'CreatedBy.Name': 'category'},
+        chunksize=50000
+    ):
+        group_status = chunk.groupby('Group')['CreatedBy.Name'].agg([
+            ('all_migration', lambda x: (x == 'Data Migration').all()),
+            ('any_migration', lambda x: (x == 'Data Migration').any()),
+            ('users_present', lambda x: x.isin(users).any())
+        ]).reset_index()
+
+        merged = chunk.merge(group_status, on='Group', how='left')
+        merged['Decision'] = np.select(
+            [
+                merged['all_migration'],
+                (~merged['any_migration']) & (~merged['users_present'])
+            ],
+            ['Keep', 'Ignore'],
+            default='Exception'
+        )
+        chunk_list.append(merged[['Group', 'CreatedBy.Name', 'Decision']])
+
+    result = pd.concat(chunk_list, ignore_index=True)
+    result.to_excel(output_path, index=False)
+
+if __name__ == "__main__":
+    process_large_csv()
