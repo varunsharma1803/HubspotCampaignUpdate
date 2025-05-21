@@ -1,0 +1,51 @@
+import pandas as pd
+from collections import defaultdict
+
+def process_large_email_data_csv(input_csv_path, output_csv_path, chunk_size=100000):
+    domain_account_map = defaultdict(
+        lambda: defaultdict(lambda: {'count': 0, 'max_date': pd.Timestamp.min})
+    )
+
+    for chunk in pd.read_csv(
+        input_csv_path,
+        usecols=["EmailDomain", "AccountId", "LastModifiedDate"],
+        chunksize=chunk_size
+    ):
+        # Convert to datetime and remove timezone info
+        chunk['LastModifiedDate'] = pd.to_datetime(
+            chunk['LastModifiedDate'], errors='coerce'
+        ).dt.tz_localize(None)
+        chunk = chunk.dropna(subset=['EmailDomain', 'AccountId', 'LastModifiedDate'])
+        for _, row in chunk.iterrows():
+            domain = row['EmailDomain']
+            account = row['AccountId']
+            mod_date = row['LastModifiedDate']
+            entry = domain_account_map[domain][account]
+            entry['count'] += 1
+            if mod_date > entry['max_date']:
+                entry['max_date'] = mod_date
+
+    results = []
+    for domain, accounts in domain_account_map.items():
+        account_stats = [
+            (acc, data['count'], data['max_date']) for acc, data in accounts.items()
+        ]
+        max_count = max(stat[1] for stat in account_stats)
+        candidates = [stat for stat in account_stats if stat[1] == max_count]
+        if len(candidates) > 1:
+            candidates.sort(key=lambda x: x[2], reverse=True)
+        best_account = candidates[0][0]
+        results.append({
+            "EmailDomain": domain,
+            "AccountId with highest number of this email domain": best_account
+        })
+
+    result_df = pd.DataFrame(results)
+    result_df.to_csv(output_csv_path, index=False)
+    print(f"Output written to {output_csv_path}")
+
+# Usage
+if __name__ == "__main__":
+    input_csv = r"C:\Users\varun\Downloads\ArcDataAnalysis21May2025\SampleData.csv"
+    output_csv = r"C:\Users\varun\Downloads\ArcDataAnalysis21May2025\output.csv"
+    process_large_email_data_csv(input_csv, output_csv, chunk_size=100000)
